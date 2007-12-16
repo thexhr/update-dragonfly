@@ -120,9 +120,11 @@ check_for_file()
 		log "${1} is not installed locally,  Skip over it"
 		return 1
 	else
-		if [ "`${SUM} -q ${1}`" != "${2}" ]; then
+		if [ "`${SUM} -q ${1}`" != "${2}" -a ${OVERWRITE} -eq 0 ]; then
 			echo "${1} was modified locally.  Skip it."
 			return 2
+		elif [ "`${SUM} -q ${1}`" != "${2}" -a ${OVERWRITE} -eq 1 ]; then
+			log "${1} modified locally, but you choosed to overwrite it"
 		fi
 	fi
 
