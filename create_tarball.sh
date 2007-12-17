@@ -3,7 +3,7 @@
 d=`mktemp -d /tmp/updfly.XXXX`
 ud=update-dragonfly
 cvsid=matthias@globus.mathematik.uni-marburg.de:/cvs
-remote=schmidtm@login.mathematik.uni-marburg.de:.www/update_dragonfly/
+remote=schmidtm@login.mathematik.uni-marburg.de:.www/update_dragonfly
 
 cd /tmp
 
@@ -23,5 +23,7 @@ rm -f $ud/*.swp
 echo "Create tarball"
 tar cf $ud.tar $ud || return
 gzip -9 $ud.tar || return
+echo ""
+tar tfvz $ud.tar.gz
 echo ""
 echo "scp /tmp/$ud.tar.gz $remote"
