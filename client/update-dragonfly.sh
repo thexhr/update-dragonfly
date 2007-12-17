@@ -57,7 +57,7 @@ save_file_perm()
 		else
 			FL="0"
 		fi
-		STR=`stat -f "%OLp#%Su#%Sg" ${1}`
+		STR=`stat -f "%OLp#%Su#%Sg" ${1}` || return
                 echo "${1}#${STR}#${2}#${FL}" >> ${TMPLOG}
         else
                 log "${1} not installed.  Help me"
@@ -82,7 +82,7 @@ patch_file()
 	fi
 
 	# XXX What about other file types (@, |, =) ???
-	FTYPE=`stat -f "%ST" ${1}`
+	FTYPE=`stat -f "%ST" ${1}` || return
 	case "${FTYPE}" in
 		'*')
 			# Executable file.  We have to use bspatch.  Works with
@@ -144,16 +144,18 @@ handle_file_flags()
 		if [ "${2}" = "schg" ]; then
 			# schg flag set
 			log "Remove schg flag from ${1}"
-			chflags noschg ${1}
+			chflags noschg ${1} || return 1
 		fi
 	# set flag
 	elif [ ${3} -eq 1 ]; then
 		if [ "${2}" = "schg" ]; then
 			# schg flag set
 			log "Set schg flag to ${1}"
-			chflags schg ${1}
+			chflags schg ${1} || return 1
 		fi
 	fi
+
+	return 0
 }
 
 # Check if the file was already installed.  This prevents over-installation of 
@@ -178,12 +180,56 @@ backup_file()
 	#BINARY=$1
 
 	BACKUPD=${LOC}/${VERSION}/backup
+	BACKUPF=${BACKUPD}/`echo ${1} | sed -e 's/\//_/g'`.gz
 
 	if [ ! -d ${BACKUPD} ]; then
-		mkdir -p ${BACKUPD}
+		mkdir -p ${BACKUPD} || return 1
 	fi
 
-	cat ${1} | gzip -9 - > "${BACKUPD}/`basename ${1}`.backup.gz"
+	cat ${1} | gzip -9 - > ${BACKUPF} || return 1
+
+	return 0
+}
+
+# Reinstall a previously updated file from the backup
+reinstall_backup()
+{
+	if [ ! -e ${TMPLOG} ]; then
+		echo "No update log found.  Cannot reinstall backups"
+		exit 1
+	fi
+
+	echo "Reinstalling backups ..."	
+	for i in `cat ${TMPLOG}`; do
+		# Location of the file
+		BINARY=`echo ${i} | cut -d '#' -f 1`
+		# Mode
+		MODE=`echo ${i} | cut -d '#' -f 2`
+		# Owner
+		USER=`echo ${i} | cut -d '#' -f 3`
+		# Group
+		GROUP=`echo ${i} | cut -d '#' -f 4`
+		# Checksum of the modified (new) file
+		SUM_NEW=`echo ${i} | cut -d '#' -f 5`
+		# Potential file flags (eg schg)
+		FLAGS=`echo ${i} | cut -d '#' -f 6`
+		# Calculate the filename of the modified (new) file
+		FSUFFIX=`echo ${BINARY} | sed -e 's/\//_/g'`.gz
+		BACKUP_TEMP=${LOC}/${VERSION}/backup/${FSUFFIX}
+
+		if [ ${NFLAG} -eq 0 ]; then
+			echo "${BINARY}"
+			TMPF=`mktemp ${LOC}/${VERSION}/backup/bi.XXXXX` || return 1
+			cat ${BACKUP_TEMP} | gzip -d > ${TMPF} || return 1
+			install -m ${MODE} -o ${USER} -g ${GROUP} \
+				${TMPF} ${BINARY} || return 1
+			rm -f ${TMPF} || return 1
+		else
+			echo "${BINARY}"
+		fi
+	done
+
+	return 0
 }
 
 # Install the patched files.  Before installating check if the file was already
@@ -227,7 +273,7 @@ install_updates()
 				log "Backup ${BINARY}"
 				backup_file ${BINARY} 
 				install -m ${MODE} -o ${USER} -g ${GROUP} \
-					${BIN_TEMP} ${BINARY}
+					${BIN_TEMP} ${BINARY} || return 1
 				# Reset possible file flags
 				handle_file_flags ${BINARY} ${FLAGS} 1
 			else
@@ -239,6 +285,8 @@ install_updates()
 	if [ ${NFLAG} -eq 0 ]; then
 		echo "All updates installed"
 	fi
+
+	return 0
 }
 
 # Show all the patched files so that the user can decide either he wants to
@@ -278,7 +326,10 @@ get_updates()
 
 		# Fetch the diff file
 		fetch -q -o ${LOC}/${VERSION}/${DIFF} \
-			${SERVER}/${RPATH}/${VERSION}/${ARCH}/${DIFF}
+			${SERVER}/${RPATH}/${VERSION}/${ARCH}/${DIFF} || {
+			echo "Cannot fetch ${LOC}/${VERSION}/${DIFF}.  Abort"
+			exit 1
+		}
 	
 		# Verify the diff	
 		if [ "`${SUM} -q ${LOC}/${VERSION}/${DIFF}`" != "$SUM_DIFF" ]; then
@@ -314,12 +365,12 @@ check_version()
 
 	# update-dragonfly directory not found
 	if [ ! -d ${LOC}/${VERSION} ]; then
-		mkdir -p ${LOC}/${VERSION}
+		mkdir -p ${LOC}/${VERSION} || return 1
 	fi
 
 	# Checksum file exists, remove it
 	if [ -e ${LOC}/${VERSION}/INDEX.sha1 ]; then
-		rm -f ${LOC}/${VERSION}/INDEX.sha1
+		rm -f ${LOC}/${VERSION}/INDEX.sha1 || return 1
 	fi
 
 	# This is the file where all to-be-installed files are recorded	
@@ -357,6 +408,8 @@ check_version()
 		echo "INDEX file corrupt.  Abort."
 		exit 1
 	fi
+
+	return 0
 }
 
 # Startup checks
@@ -381,12 +434,13 @@ startup()
 
 usage()
 {
-	echo "usage: $0 [-ghinv] [-f config]"
+	echo "usage: $0 [-ghinrv] [-f config]"
 	echo "		-g : Get available updates"
 	echo "		-h : Print this help"
 	echo "		-i : Install previous fetched updates"
 	echo "		-n : Do not actually install updates.  Just report all"
 	echo "		     install steps taken"
+	echo "		-r : Reinstall previously backed up files"
 	echo "		-v : Be more verbose"
 	echo ""
 	echo "		-f config: Use this config file"
@@ -394,12 +448,13 @@ usage()
 	exit 0
 }
 
-args=`getopt gf:hinv $*`
+args=`getopt gf:hinrv $*`
 
 FFLAG=0
 GFLAG=0
 IFLAG=0
 NFLAG=0
+RFLAG=0
 DEBUG=0
 
 TMPLOG=
@@ -434,6 +489,10 @@ for i; do
 	-n)
 		NFLAG=1
 		shift;;
+	# Reinstall backups from latest run
+	-r)
+		RFLAG=1
+		shift;;
 	# Be more verbose
         -v)
                 DEBUG=1
@@ -453,7 +512,7 @@ if [ ${GFLAG} -eq 1 -a ${IFLAG} -eq 1 ]; then
 	echo "Please choose either -g or -i.  If you want to get updates first"
 	echo "and install them afterwards use $0 -g && $0 -i"
 	exit 1
-elif [ ${GFLAG} -eq 0 -a ${IFLAG} -eq 0 ]; then
+elif [ ${GFLAG} -eq 0 -a ${IFLAG} -eq 0 -a ${RFLAG} -eq 0 ]; then
 	usage
 fi
 
@@ -473,6 +532,13 @@ if [ ${IFLAG} -eq 1 ]; then
 	VERSION=`uname -r | cut -d '-' -f 1`
 	TMPLOG=${LOC}/${VERSION}/INSTALL.LOG
 	install_updates
+fi
+
+if [ ${RFLAG} -eq 1 ]; then
+	startup
+	VERSION=`uname -r | cut -d '-' -f 1`
+	TMPLOG=${LOC}/${VERSION}/INSTALL.LOG
+	reinstall_backup
 fi
 
 exit $?
