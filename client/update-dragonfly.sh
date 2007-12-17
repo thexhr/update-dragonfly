@@ -237,14 +237,14 @@ reinstall_backup()
 install_updates()
 {
 	if [ ! -e ${TMPLOG} ]; then
-		echo "No update log found.  Please run $0 -g at first"
+		echo "No update log found.  Please run `basename $0` -g at first"
 		exit 1
 	fi
 	
 	if [ ${NFLAG} -eq 0 ]; then
 		echo "Installing updates..."
 	else
-		echo "Without -n $0 would update the following files"
+		echo "Without -n `basename $0` would update the following files"
 	fi
 
 	for i in `cat ${TMPLOG}`; do
@@ -300,7 +300,7 @@ show_updates()
 	fi
 
 	echo ""
-	echo "Use $0 -i to install the following files:"
+	echo "Use `basename $0` -i to install the following files:"
 	for i in `cat ${TMPLOG}`; do
 		echo ${i} | cut -d '#' -f 1
 	done
@@ -417,16 +417,16 @@ startup()
 {
 
 	if [ `uname -s` != "DragonFly" ]; then
-		echo "Sorry.  $0 is for DragonFlyBSD only."
+		echo "Sorry.  `basename $0` is for DragonFlyBSD only."
 		exit 1
 	fi
 	if [ `id -u ` -ne 0 ]; then
-		echo "You have to be root to use $0.  Abort."
+		echo "You have to be root to use `basename $0`.  Abort."
 		exit 1
 	fi
 
 	if [ -z `which bsdiff` ]; then
-		echo "$0 needs bspatch and bsdiff.  Please install them at first."
+		echo "`basename $0` needs bspatch and bsdiff.  Please install them at first."
 		echo "pkgsrc(7) contains a version in misc/bsdiff"
 		exit 1
 	fi
@@ -435,7 +435,7 @@ startup()
 
 usage()
 {
-	echo "usage: $0 [-ghinrv] [-f config]"
+	echo "usage: `basename $0` [-ghinrv] [-f config]"
 	echo "		-g : Get available updates"
 	echo "		-h : Print this help"
 	echo "		-i : Install previous fetched updates"
@@ -511,7 +511,7 @@ fi
 
 if [ ${GFLAG} -eq 1 -a ${IFLAG} -eq 1 ]; then
 	echo "Please choose either -g or -i.  If you want to get updates first"
-	echo "and install them afterwards use $0 -g && $0 -i"
+	echo "and install them afterwards use `basename $0` -g && `basename $0` -i"
 	exit 1
 elif [ ${GFLAG} -eq 0 -a ${IFLAG} -eq 0 -a ${RFLAG} -eq 0 ]; then
 	usage
