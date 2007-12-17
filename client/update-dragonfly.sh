@@ -426,7 +426,8 @@ startup()
 	fi
 
 	if [ -z `which bsdiff` ]; then
-		echo "$0 needs bspatch and bsdiff.  Please install them at first"
+		echo "$0 needs bspatch and bsdiff.  Please install them at first."
+		echo "pkgsrc(7) contains a version in misc/bsdiff"
 		exit 1
 	fi
 	check_temp_loc
