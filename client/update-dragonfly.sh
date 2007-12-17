@@ -194,6 +194,13 @@ backup_file()
 # Reinstall a previously updated file from the backup
 reinstall_backup()
 {
+	BACKUPDIR=${LOC}/${VERSION}/backup/
+
+	if [ ! -d ${BACKUPDIR} ]; then
+		echo "No backups found."
+		exit 1
+	fi
+
 	if [ ! -e ${TMPLOG} ]; then
 		echo "No update log found.  Cannot reinstall backups"
 		exit 1
@@ -215,7 +222,7 @@ reinstall_backup()
 		FLAGS=`echo ${i} | cut -d '#' -f 6`
 		# Calculate the filename of the modified (new) file
 		FSUFFIX=`echo ${BINARY} | sed -e 's/\//_/g'`.gz
-		BACKUP_TEMP=${LOC}/${VERSION}/backup/${FSUFFIX}
+		BACKUP_TEMP=${BACKUPDIR}/${FSUFFIX}
 
 		if [ ${NFLAG} -eq 0 ]; then
 			echo "${BINARY}"
@@ -236,6 +243,8 @@ reinstall_backup()
 # installed.
 install_updates()
 {
+	ISUM=0
+
 	if [ ! -e ${TMPLOG} ]; then
 		echo "No update log found.  Please run `basename $0` -g at first"
 		exit 1
@@ -276,14 +285,17 @@ install_updates()
 					${BIN_TEMP} ${BINARY} || return 1
 				# Reset possible file flags
 				handle_file_flags ${BINARY} ${FLAGS} 1
+				ISUM=$(($ISUM + 1))
 			else
 				echo "${BINARY}"
 			fi
 		fi
 	done
-
-	if [ ${NFLAG} -eq 0 ]; then
+	
+	if [ ${ISUM} -gt 0 -a ${NFLAG} -eq 0 ]; then
 		echo "All updates installed"
+	elif [ ${ISUM} -eq 0 -a ${NFLAG} -eq 0 ]; then
+		echo "All updates already installed"
 	fi
 
 	return 0
@@ -357,11 +369,30 @@ get_updates()
 	done
 }
 
-# Check for an INDEX file on the server and compute the checksum
+
+# Check for the installed kernel binary and kernel version
 check_version()
 {
 	VERSION=`uname -r | cut -d '-' -f 1`
+	RELEASE=`uname -r | cut -d '-' -f 2`
 	ARCH=`uname -m`
+
+	if [ ! -e `sysctl -n kern.bootfile` ]; then
+		echo "Cannot find your running kernel binary.  Abort."
+		exit 1
+	fi
+
+	if [ ${RELEASE} != "RELEASE" ]; then
+		echo -n "Sorry, `basename $0` supports RELEASE kernel "
+		echo "version only"
+		exit 1
+	fi
+
+}
+
+# Check for an INDEX file on the server and compute the checksum
+get_index()
+{
 
 	# update-dragonfly directory not found
 	if [ ! -d ${LOC}/${VERSION} ]; then
@@ -428,6 +459,12 @@ startup()
 	if [ -z `which bsdiff` ]; then
 		echo "`basename $0` needs bspatch and bsdiff.  Please install them at first."
 		echo "pkgsrc(7) contains a version in misc/bsdiff"
+		exit 1
+	fi
+
+	if [ `sysctl -n kern.securelevel` -gt 0 ]; then
+		echo "securelevel greater than zero.  Cannot modifly"
+		echo "system flags."
 		exit 1
 	fi
 	check_temp_loc
@@ -521,8 +558,9 @@ fi
 # Get updates
 if [ ${GFLAG} -eq 1 ]; then
 	startup
-	verify_server
 	check_version
+	verify_server
+	get_index
 	get_updates
 	show_updates
 fi
