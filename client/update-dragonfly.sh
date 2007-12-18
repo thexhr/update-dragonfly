@@ -1,8 +1,10 @@
 #!/bin/sh
 
+# Copyright (c) 2007 Matthias Schmidt <schmidtm@mathematik.uni-marburg.de>
+
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin:${PATH}
 
-# Print a message if -v is give
+# Print a message if -v is given
 log()
 {
 	MSG=$1
@@ -58,6 +60,7 @@ save_file_perm()
 			FL="0"
 		fi
 		STR=`stat -f "%OLp#%Su#%Sg" ${1}` || return
+		# Write install log entry
                 echo "${1}#${STR}#${2}#${FL}" >> ${TMPLOG}
         else
                 log "${1} not installed.  Help me"
@@ -125,6 +128,7 @@ check_for_file()
 			return 2
 		elif [ "`${SUM} -q ${1}`" != "${2}" -a ${OVERWRITE} -eq 1 ]; then
 			log "${1} modified locally, but you choosed to overwrite it"
+			return 3
 		fi
 	fi
 
@@ -344,7 +348,7 @@ get_updates()
 		}
 	
 		# Verify the diff	
-		if [ "`${SUM} -q ${LOC}/${VERSION}/${DIFF}`" != "$SUM_DIFF" ]; then
+		if [ "`${SUM} -q ${LOC}/${VERSION}/${DIFF}`" != "${SUM_DIFF}" ]; then
 			echo "Patch ${DIFF} corrupt.  Abort."
 			exit 1
 		fi
@@ -352,19 +356,41 @@ get_updates()
 		# Check if the file we want to patch is installed on the local
 		# machine and if the file matches the original checksum
 		check_for_file ${BINARY} ${SUM_OLD}
-		if [ $? -eq 1 -o $? -eq 2 ]; then
-			break
+		RET=$?
+		OVER=0
+		if [ ${RET} -eq 1 -o ${RET} -eq 2 ]; then
+			continue	
+		# User agreed to overwrite, but we have a checksum mismatch
+		# thus fetch the whole file
+		elif [ ${RET} -eq 3 ]; then
+			log "Fetch complete file"
+			FNAME=`echo ${BINARY} | sed -e 's/\//_/g'`
+			# Fetch the complete file
+			fetch -q -o ${LOC}/${VERSION}/${FNAME} \
+				${SERVER}/${RPATH}/${VERSION}/${ARCH}/${FNAME} || {
+				echo "Cannot fetch ${LOC}/${VERSION}/${FNAME}.  Abort"
+				exit 1
+			}
+			# Verify the file
+			if [ "`${SUM} -q ${LOC}/${VERSION}/${FNAME}`" != "${SUM_NEW}" ]; then
+				echo "Fetched ${BINARY} corrupt.  Abort."
+				exit 1
+			fi
+			OVER=1
 		fi
-
+		
 		# Check if the file is already installed.  This is necessary here
 		# because trying to patch an already patched file would fail
 		check_already_installed ${BINARY} ${SUM_NEW}
-		if [ $? -eq 0 ]; then
+		RET=$?
+		if [ ${RET} -eq 0 -a ${OVER} -eq 0 ]; then
 			# Patch existing file
-			log "Save permissions"
 			save_file_perm ${BINARY} ${SUM_NEW}
 			log "Patch ${BINARY}"
 			patch_file ${BINARY} ${DIFF} ${SUM_NEW}
+		elif [ ${RET} -eq 0 -a ${OVER} -eq 1 ]; then
+			# Overwrite existing file
+			save_file_perm ${BINARY} ${SUM_NEW}
 		fi
 	done
 }
