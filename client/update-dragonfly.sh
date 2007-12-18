@@ -251,8 +251,10 @@ reinstall_backup()
 			# Calculate the filename of the modified (new) file
 			BACKUP_TEMP=${BACKUPDIR}/${FSUFFIX}
 			cat ${BACKUP_TEMP} | ${ZIP} -d > ${TMPF} || return 1
+			handle_file_flags ${BINARY} ${FLAGS} 0
 			install -m ${MODE} -o ${USER} -g ${GROUP} \
 				${TMPF} ${BINARY} || return 1
+			handle_file_flags ${BINARY} ${FLAGS} 1
 			rm -f ${TMPF} || return 1
 		else
 			echo "${BINARY}"
