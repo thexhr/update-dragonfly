@@ -1,7 +1,8 @@
 #!/bin/sh
 
 # Base directory where the unpatched and the patched system is
-BASE=/home/update
+#BASE=/usr/scratch/update-dragonfly
+BASE=/home/update/up
 
 
 SUM=/sbin/sha1
@@ -39,26 +40,47 @@ startup()
 
 }
 
+# Copy the complete file to the update directory.  This is usefull if the user
+# has a modified world and agrees to get his files updates
+copy_file()
+{
+	# $1 = Original file in the unmodified tree
+	# $2 = Modified file in the modified tree
+	# $3 = Checksum of the original file
+	# $4 = Checksum of the modified file
+	# $5 = Real path (without prefix and directory name) of the file
+
+	FLOC=${LOC}/`echo ${5} | sed -e 's/\//_/g'`
+
+	echo "Copy $1 to $FLOC"
+	
+	case "`stat -f "%ST" $prefix/${1}`" in
+		'*')	
+			cp $prefix/${2} ${FLOC}	
+			#echo "${5}#FILE#FILE#${3}#${4}"\
+			#	>> ${INDEX}
+			;;
+		'@')
+			echo "Symlink.  Skip it"
+			;;
+	esac
+}
+
 # Create a binary/text diff, record it to the INDEX file and
 # compute the checksums
 create_patch()
 {
-	# Original file in the unmodified tree
-	O=$1
-	# Patched file in the modified tree
-	N=$2
-	# Checksum of the original file
-	SUM_OLD=$3
-	# Checksum of the patched file
-	SUM_NEW=$4
-	# Real path (without prefix and directory name) of the file
-	RO=$5
+	# $1 = Original file in the unmodified tree
+	# $2 = Modified file in the modified tree
+	# $3 = Checksum of the original file
+	# $4 = Checksum of the modified file
+	# $5 = Real path (without prefix and directory name) of the file
 
 	# Check the file type
-	FTYPE=`stat -f "%ST" $prefix/${O}`
+	FTYPE=`stat -f "%ST" $prefix/${1}`
 	# Convert all slashes (/) to underscores (_) to generate an unique
 	# name for the diff
-	NAME=`echo ${RO} | sed -e 's/\//_/g'`
+	NAME=`echo ${5} | sed -e 's/\//_/g'`
 	# Location of the diff
 	DIFF="${LOC}/${NAME}.diff"
         
@@ -66,14 +88,14 @@ create_patch()
                 '*')
 			# Executable, so use bsdiff (works with shell scripts
 			# as well)
-                        bsdiff $prefix/${O} $prefix/${N} ${DIFF}
+                        bsdiff $prefix/${1} $prefix/${2} ${DIFF}
 			if [ ! -e ${DIFF} ]; then
 				echo "Creating ${DIFF} failed.  Abort"
 				exit $?
 			fi
 			SUM_DIFF="`${SUM} -q ${DIFF}`"
 			# Generate INDEX entry
-			echo "${RO}#`basename ${DIFF}`#${SUM_DIFF}#${SUM_OLD}#${SUM_NEW}"\
+			echo "${5}#`basename ${DIFF}`#${SUM_DIFF}#${3}#${4}"\
 				 >> ${INDEX}
                 ;;
 		'@')
@@ -81,14 +103,14 @@ create_patch()
 		;;
                 *)
 			# Normal file
-			diff -uN $prefix/${O} $prefix/${N} > ${DIFF}
+			diff -uN $prefix/${1} $prefix/${2} > ${DIFF}
 			if [ ! -e ${DIFF} ]; then
 				echo "Creating ${DIFF} failed.  Abort"
 				exit $?
 			fi
 			SUM_DIFF="`${SUM} -q ${DIFF}`"
 			# Generate INDEX entry
-			echo "${RO}#`basename ${DIFF}`#${SUM_DIFF}#${SUM_OLD}#${SUM_NEW}"\
+			echo "${5}#`basename ${DIFF}`#${SUM_DIFF}#${3}#${4}"\
 				 >> ${INDEX}
                 ;;
         esac
@@ -114,14 +136,16 @@ dir()
 		# Compare two files
 		if [ -f "$prefix/$opath/$i" ]; then
 			if [ -f "$prefix/$mpath/$i" ]; then
-				echo "Check $opath/$i and $mpath/$i"
+				#echo "Check $opath/$i and $mpath/$i"
 				OSUM=`${SUM} -q $prefix/$opath/$i`
 				NSUM=`${SUM} -q $prefix/$mpath/$i`
 				# Checksum different, so generate a patch
 				if [ "${OSUM}" != "${NSUM}" ]; then
 					echo -n "NOTE: $ropath/$i and "
 					echo "$rmpath/$i differ.  Create patch"
+					# Create a pathc
 					create_patch "$opath/$i" "$mpath/$i" "${OSUM}" "${NSUM}" "${ropath}/$i"
+					copy_file "$opath/$i" "$mpath/$i" "${OSUM}" "${NSUM}" "${ropath}/$i"
 				fi
 			# XXX What to do now?
 			else
