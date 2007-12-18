@@ -179,7 +179,7 @@ dir "."
 if [ ! -e ${INDEX} ]; then
 	echo "INDEX file not found."
 else
-	${SUM} -q ${INDEX} > ${INDEX}.sha1
+	${SUM} -q ${INDEX} > ${INDEX}.sum
 fi
 
 exit $?
