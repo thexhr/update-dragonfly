@@ -213,7 +213,7 @@ reinstall_backup()
 		exit 1
 	fi
 
-	echo "Reinstalling backups ..."	
+	echo -n "Reinstalling backups... "	
 	for i in `cat ${TMPLOG}`; do
 		# Location of the file
 		BINARY=`echo ${i} | cut -d '#' -f 1`
@@ -232,7 +232,7 @@ reinstall_backup()
 		BACKUP_TEMP=${BACKUPDIR}/${FSUFFIX}
 
 		if [ ${NFLAG} -eq 0 ]; then
-			echo "${BINARY}"
+			log "${BINARY}"
 			# Unextract the file into a temporary location
 			TMPF=`mktemp ${LOC}/${VERSION}/backup/bi.XXXXX` || return 1
 			cat ${BACKUP_TEMP} | gzip -d > ${TMPF} || return 1
@@ -243,6 +243,7 @@ reinstall_backup()
 			echo "${BINARY}"
 		fi
 	done
+	echo "done."
 
 	return 0
 }
@@ -260,7 +261,7 @@ install_updates()
 	fi
 	
 	if [ ${NFLAG} -eq 0 ]; then
-		echo "Installing updates..."
+		echo -n "Installing updates... "
 	else
 		echo "Without -n `basename $0` would update the following files"
 	fi
@@ -302,9 +303,9 @@ install_updates()
 	done
 	
 	if [ ${ISUM} -gt 0 -a ${NFLAG} -eq 0 ]; then
-		echo "All updates installed"
+		echo "done."
 	elif [ ${ISUM} -eq 0 -a ${NFLAG} -eq 0 ]; then
-		echo "All updates already installed"
+		echo "updates already installed."
 	fi
 
 	return 0
@@ -321,7 +322,7 @@ show_updates()
 	fi
 
 	echo ""
-	echo "Use `basename $0` -i to install the following files:"
+	echo "Updates for the following files are available:"
 	for i in `cat ${TMPLOG}`; do
 		echo ${i} | cut -d '#' -f 1
 	done
@@ -332,7 +333,7 @@ get_updates()
 {
 	INDEX=${LOC}/${VERSION}/INDEX
 	
-	echo "Get all available updates..."
+	echo -n "Get all available updates... "
 	for i in `cat ${INDEX}`; do
 		# Absolute path of the file
 		BINARY=`echo $i | cut -d '#' -f 1`
@@ -348,14 +349,24 @@ get_updates()
 		# Fetch the diff file
 		fetch -q -o ${LOC}/${VERSION}/${DIFF} \
 			${SERVER}/${RPATH}/${VERSION}/${ARCH}/${DIFF} || {
+			echo "failed."
 			echo "Cannot fetch ${LOC}/${VERSION}/${DIFF}.  Abort"
 			exit 1
 		}
 	
 		# Verify the diff	
 		if [ "`${SUM} -q ${LOC}/${VERSION}/${DIFF}`" != "${SUM_DIFF}" ]; then
+			echo "failed."
 			echo "Patch ${DIFF} corrupt.  Abort."
 			exit 1
+		fi
+		
+		# Check if the file is already installed.  This is necessary here
+		# because trying to patch an already patched file would fail
+		check_already_installed ${BINARY} ${SUM_NEW}
+		CAIRET=$?
+		if [ ${CAIRET} -eq 1 ]; then
+			continue
 		fi
 
 		# Check if the file we want to patch is installed on the local
@@ -373,31 +384,31 @@ get_updates()
 			# Fetch the complete file
 			fetch -q -o ${LOC}/${VERSION}/${FNAME} \
 				${SERVER}/${RPATH}/${VERSION}/${ARCH}/${FNAME} || {
+				echo "failed."
 				echo "Cannot fetch ${LOC}/${VERSION}/${FNAME}.  Abort"
 				exit 1
 			}
 			# Verify the file
 			if [ "`${SUM} -q ${LOC}/${VERSION}/${FNAME}`" != "${SUM_NEW}" ]; then
+				echo "failed."
 				echo "Fetched ${BINARY} corrupt.  Abort."
 				exit 1
 			fi
 			OVER=1
 		fi
 		
-		# Check if the file is already installed.  This is necessary here
-		# because trying to patch an already patched file would fail
-		check_already_installed ${BINARY} ${SUM_NEW}
-		RET=$?
-		if [ ${RET} -eq 0 -a ${OVER} -eq 0 ]; then
+		if [ ${CAIRET} -eq 0 -a ${OVER} -eq 0 ]; then
 			# Patch existing file
 			save_file_perm ${BINARY} ${SUM_NEW}
 			log "Patch ${BINARY}"
 			patch_file ${BINARY} ${DIFF} ${SUM_NEW}
-		elif [ ${RET} -eq 0 -a ${OVER} -eq 1 ]; then
+		elif [ ${CAIRET} -eq 0 -a ${OVER} -eq 1 ]; then
 			# Overwrite existing file
 			save_file_perm ${BINARY} ${SUM_NEW}
 		fi
 	done
+
+	echo "done."
 }
 
 
@@ -442,26 +453,30 @@ get_index()
 	# Fetch the checksum first.  If the fetched checksum and the computed
 	# checksum of an installed INDEX file match, no newer updates are
 	# available
-	echo "Check for $VERSION updates"
+	echo -n "Check for DragonFly $VERSION updates... "
 	fetch -q -o ${LOC}/${VERSION}/INDEX.sum \
 		${SERVER}/${RPATH}/${VERSION}/${ARCH}/INDEX.sum || {
+		echo "failed."
 		echo "Cannot fetch INDEX.sum.  Abort."
+		cleanup_after_failure
 		exit 1
 	}
-	
+
 	SUM_CONT=`cat ${LOC}/${VERSION}/INDEX.sum`
 	if [ -e ${LOC}/${VERSION}/INDEX ]; then
 		INDEX_SUM_B=`${SUM} -q ${LOC}/${VERSION}/INDEX`
 		if [ "$SUM_CONT" = "$INDEX_SUM_B" ]; then
+			echo "done."
 			echo "No new updates available."
 			exit 1
 		fi
 	fi
-	echo "New updates available..."
+	echo "done."
 	
 	fetch -q -o ${LOC}/${VERSION}/INDEX \
 		${SERVER}/${RPATH}/${VERSION}/${ARCH}/INDEX || {
 		echo "Getting INDEX file failed.  Abort."
+		cleanup_after_failure
 		exit 1
 	}
 
@@ -469,12 +484,26 @@ get_index()
 	INDEX_SUM_B=`${SUM} -q ${LOC}/${VERSION}/INDEX`
 	if [ "$SUM_CONT" != "$INDEX_SUM_B" ]; then
 		echo "INDEX file corrupt.  Abort."
+		cleanup_after_failure
 		exit 1
 	fi
 
 	return 0
 }
 
+# Remove the INDEX and the checksum file after a failure.  This prevents $0
+# from displaying "No new updates" even if there are new updates available.
+cleanup_after_failure()
+{
+	if [ -e ${LOC}/${VERSION}/INDEX.sum ]; then
+		rm -f ${LOC}/${VERSION}/INDEX.sum || return 1
+	fi
+
+	if [ -e ${LOC}/${VERSION}/INDEX ]; then
+		rm -f ${LOC}/${VERSION}/INDEX || return 1
+	fi
+	
+}
 # Startup checks
 startup()
 {
