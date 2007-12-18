@@ -193,7 +193,14 @@ backup_file()
 		install -d -o root -g wheel -m 750 ${BACKUPD} || return 1
 	fi
 
-	cat ${1} | gzip -9 - > ${BACKUPF}.gz || return 1
+	if [ ${ZIP} = "gzip" ]; then
+		cat ${1} | ${ZIP} -9 - > ${BACKUPF}.gz || return 1
+	elif [ ${ZIP} = "bzip2" ]; then
+		cat ${1} | ${ZIP} -9 - > ${BACKUPF}.bz2 || return 1
+	else
+		echo "Unsupported compress program ${ZIP}"
+		exit 1
+	fi
 
 	return 0
 }
@@ -227,15 +234,23 @@ reinstall_backup()
 		SUM_NEW=`echo ${i} | cut -d '#' -f 5`
 		# Potential file flags (eg schg)
 		FLAGS=`echo ${i} | cut -d '#' -f 6`
-		# Calculate the filename of the modified (new) file
-		FSUFFIX=`echo ${BINARY} | sed -e 's/\//_/g'`.gz
-		BACKUP_TEMP=${BACKUPDIR}/${FSUFFIX}
 
 		if [ ${NFLAG} -eq 0 ]; then
 			log "${BINARY}"
 			# Unextract the file into a temporary location
 			TMPF=`mktemp ${LOC}/${VERSION}/backup/bi.XXXXX` || return 1
-			cat ${BACKUP_TEMP} | gzip -d > ${TMPF} || return 1
+			if [ ${ZIP} = "gzip" ]; then
+				FSUFFIX=`echo ${BINARY} | sed -e 's/\//_/g'`.gz
+			elif [ ${ZIP} = "bzip2" ]; then
+				FSUFFIX=`echo ${BINARY} | sed -e 's/\//_/g'`.bz2
+			else
+				echo "failed."
+				echo "Unsupported compress program ${ZIP}"
+				exit 1
+			fi
+			# Calculate the filename of the modified (new) file
+			BACKUP_TEMP=${BACKUPDIR}/${FSUFFIX}
+			cat ${BACKUP_TEMP} | ${ZIP} -d > ${TMPF} || return 1
 			install -m ${MODE} -o ${USER} -g ${GROUP} \
 				${TMPF} ${BINARY} || return 1
 			rm -f ${TMPF} || return 1
@@ -449,6 +464,9 @@ get_index()
 
 	# This is the file where all to-be-installed files are recorded	
 	TMPLOG=${LOC}/${VERSION}/INSTALL.LOG
+	#if [ -e ${TMPLOG} ]; then
+	#	rm -f ${TMPLOG}
+	#fi
 
 	# Fetch the checksum first.  If the fetched checksum and the computed
 	# checksum of an installed INDEX file match, no newer updates are
