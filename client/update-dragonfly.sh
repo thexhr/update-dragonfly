@@ -13,17 +13,17 @@ log()
 	fi
 }
 
-# Check if update location is availble.  If not, create it
+# Check if update location is available.  If not, create it
 check_temp_loc()
 {
-	if [ ! -d $LOC ]; then
-		mkdir -p $LOC
-		chmod 700 $LOC
+	if [ ! -d ${LOC} ]; then
+		install -d -o root -g wheel -m 700 ${LOC}
 	fi
 }
 
-# Fetch a file from the server and check the SHA sum with in one in the config
-# file.  Idea partly stolen from freebsd-update
+# Fetch a file from the server and check the checksum against the one in the
+# config file.  Idea partly stolen from freebsd-update.  Note:  The key is not
+# used to perform a verfiy operation like freebsd-update-verify.
 verify_server()
 {
 	if [ -e ${LOC}/pub.ssl ]; then
@@ -43,12 +43,12 @@ verify_server()
 	fi
 }
 
-# Save all file information needed for a correct installation
+# Save all file information needed for a correct installation:
 # User, Group, Location, Mode
 save_file_perm()
 {
-	#BINARY=$1
-	#SUM_NEW=$2
+	# $1 = Path to the file
+	# $2 = Checksum of the modified (new) file
 
 	if [ -e ${1} ]; then
                 log "Save file status"
@@ -67,18 +67,18 @@ save_file_perm()
         fi
 }
 
-# Patch the original file with the patch (either binary or text diff), validate
+# Patch the original file with the patch, validate
 # the result with the checksum and store it for later installation
 patch_file()
 {
-	#BINARY=$1
-	#DIFF=$2
-	#SUM_NEW=$3
+	# $1 = Path to the file
+	# $2 = Path to the diff file
+	# $3 = Checksum of the modified (new) file
 
-	#BIN_TEMP=${LOC}/${VERSION}/`basename ${1}`
 	SUFFIX=`echo ${1} | sed -e 's/\//_/g'`
 	BIN_TEMP=${LOC}/${VERSION}/${SUFFIX}
 
+	# File exists and checksums match
 	if [ -e ${BIN_TEMP} ] && [ "`${SUM} -q ${BIN_TEMP}`" = "${SUM_NEW}" ]; then
 		log "${BIN_TEMP} already patched"
 		return 1
@@ -87,17 +87,20 @@ patch_file()
 	# XXX What about other file types (@, |, =) ???
 	FTYPE=`stat -f "%ST" ${1}` || return
 	case "${FTYPE}" in
-		'*')
+		'*'|*)
 			# Executable file.  We have to use bspatch.  Works with
-			# shell scripts as well
+			# text files as well
 			bspatch ${1} ${BIN_TEMP} \
 				${LOC}/${VERSION}/${2}
 		;;
-		*)
-			# Text file.  Use patch
-			patch -p1 -o ${BIN_TEMP} ${1} \
-				${LOC}/${VERSION}/${2} 2> /dev/null
+		'@')
+			echo "Cannot patch symlink."
 		;;
+		#*)
+			# Text file.  Use patch
+		#	patch -p1 -o ${BIN_TEMP} ${1} \
+		#		${LOC}/${VERSION}/${2} 2> /dev/null
+		#;;
 	esac
 	
 	# Checksum mismatch,  Patching failed
@@ -113,19 +116,20 @@ patch_file()
 
 # Check if the file we want to patch is available on the local machine.
 # If not, skip over it.
-# XXX Can we assume that the user removed the file and its not our fault?
 check_for_file()
 {
-	#BINARY=$1
-	#SUM_OLD=$2
+	# $1 = Path to the file
+	# $2 = Checksum of the original (old) file
 
 	if [ ! -e ${1} ]; then
 		log "${1} is not installed locally,  Skip over it"
 		return 1
 	else
+		# Modified locally
 		if [ "`${SUM} -q ${1}`" != "${2}" -a ${OVERWRITE} -eq 0 ]; then
 			echo "${1} was modified locally.  Skip it."
 			return 2
+		# Modified locally, but the user want to overwrite it
 		elif [ "`${SUM} -q ${1}`" != "${2}" -a ${OVERWRITE} -eq 1 ]; then
 			log "${1} modified locally, but you choosed to overwrite it"
 			return 3
@@ -141,7 +145,7 @@ handle_file_flags()
 {
 	# $1 = file path
 	# $2 = flags
-	# $3 = mode
+	# $3 = operation mode
  
 	# Remove flag	
 	if [ ${3} -eq 0 ]; then
@@ -166,8 +170,8 @@ handle_file_flags()
 # previous patched file.
 check_already_installed()
 {
-	#BINARY=$1
-	#SUM_NEW=$2
+	# $1 = Path to the file
+	# $2 = Checksum of the modified (new) file
 
 	if [ "`${SUM} -q ${1}`" = "${2}" ]; then
 		log "${1} already installed"
@@ -178,19 +182,18 @@ check_already_installed()
 }
 
 # Backup file and zip it
-# XXX Rewrite it and store backups to a proper location with proper naming
 backup_file()
 {
-	#BINARY=$1
+	# $1 = Path to the file
 
 	BACKUPD=${LOC}/${VERSION}/backup
-	BACKUPF=${BACKUPD}/`echo ${1} | sed -e 's/\//_/g'`.gz
+	BACKUPF=${BACKUPD}/`echo ${1} | sed -e 's/\//_/g'`
 
 	if [ ! -d ${BACKUPD} ]; then
-		mkdir -p ${BACKUPD} || return 1
+		install -d -o root -g wheel -m 700 ${BACKUPD} || return 1
 	fi
 
-	cat ${1} | gzip -9 - > ${BACKUPF} || return 1
+	cat ${1} | gzip -9 - > ${BACKUPF}.gz || return 1
 
 	return 0
 }
@@ -230,6 +233,7 @@ reinstall_backup()
 
 		if [ ${NFLAG} -eq 0 ]; then
 			echo "${BINARY}"
+			# Unextract the file into a temporary location
 			TMPF=`mktemp ${LOC}/${VERSION}/backup/bi.XXXXX` || return 1
 			cat ${BACKUP_TEMP} | gzip -d > ${TMPF} || return 1
 			install -m ${MODE} -o ${USER} -g ${GROUP} \
@@ -247,6 +251,7 @@ reinstall_backup()
 # installed.
 install_updates()
 {
+	# Number of installed files
 	ISUM=0
 
 	if [ ! -e ${TMPLOG} ]; then
@@ -322,7 +327,7 @@ show_updates()
 	done
 }
 
-# Fetch the diffs from the server and verify them
+# Fetch the diff or the whole file  from the server and verify it
 get_updates()
 {
 	INDEX=${LOC}/${VERSION}/INDEX
@@ -422,12 +427,13 @@ get_index()
 
 	# update-dragonfly directory not found
 	if [ ! -d ${LOC}/${VERSION} ]; then
-		mkdir -p ${LOC}/${VERSION} || return 1
+		install -d -o root -g wheel -m 700 ${LOC}/${VERSION} || \
+			return 1
 	fi
 
 	# Checksum file exists, remove it
-	if [ -e ${LOC}/${VERSION}/INDEX.sha1 ]; then
-		rm -f ${LOC}/${VERSION}/INDEX.sha1 || return 1
+	if [ -e ${LOC}/${VERSION}/INDEX.sum ]; then
+		rm -f ${LOC}/${VERSION}/INDEX.sum || return 1
 	fi
 
 	# This is the file where all to-be-installed files are recorded	
@@ -437,31 +443,31 @@ get_index()
 	# checksum of an installed INDEX file match, no newer updates are
 	# available
 	echo "Check for $VERSION updates"
-	fetch -q -o ${LOC}/${VERSION}/INDEX.sha1 \
-		${SERVER}/${RPATH}/${VERSION}/${ARCH}/INDEX.sha1 || {
-		echo "INDEX.sha1 fetch failed"
+	fetch -q -o ${LOC}/${VERSION}/INDEX.sum \
+		${SERVER}/${RPATH}/${VERSION}/${ARCH}/INDEX.sum || {
+		echo "Cannot fetch INDEX.sum.  Abort."
 		exit 1
 	}
 	
-	INDEX_SUM=`cat ${LOC}/${VERSION}/INDEX.sha1`
+	SUM_CONT=`cat ${LOC}/${VERSION}/INDEX.sum`
 	if [ -e ${LOC}/${VERSION}/INDEX ]; then
 		INDEX_SUM_B=`${SUM} -q ${LOC}/${VERSION}/INDEX`
-		if [ "$INDEX_SUM" = "$INDEX_SUM_B" ]; then
+		if [ "$SUM_CONT" = "$INDEX_SUM_B" ]; then
 			echo "No new updates available."
 			exit 1
 		fi
 	fi
-	echo "New updates available."
+	echo "New updates available..."
 	
 	fetch -q -o ${LOC}/${VERSION}/INDEX \
 		${SERVER}/${RPATH}/${VERSION}/${ARCH}/INDEX || {
-		echo "Getting INDEX file failed.  Abort.."
+		echo "Getting INDEX file failed.  Abort."
 		exit 1
 	}
 
 	# INDEX checksum mismatch
 	INDEX_SUM_B=`${SUM} -q ${LOC}/${VERSION}/INDEX`
-	if [ "$INDEX_SUM" != "$INDEX_SUM_B" ]; then
+	if [ "$SUM_CONT" != "$INDEX_SUM_B" ]; then
 		echo "INDEX file corrupt.  Abort."
 		exit 1
 	fi
