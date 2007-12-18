@@ -17,7 +17,7 @@ log()
 check_temp_loc()
 {
 	if [ ! -d ${LOC} ]; then
-		install -d -o root -g wheel -m 700 ${LOC}
+		install -d -o root -g wheel -m 750 ${LOC}
 	fi
 }
 
@@ -190,7 +190,7 @@ backup_file()
 	BACKUPF=${BACKUPD}/`echo ${1} | sed -e 's/\//_/g'`
 
 	if [ ! -d ${BACKUPD} ]; then
-		install -d -o root -g wheel -m 700 ${BACKUPD} || return 1
+		install -d -o root -g wheel -m 750 ${BACKUPD} || return 1
 	fi
 
 	cat ${1} | gzip -9 - > ${BACKUPF}.gz || return 1
@@ -438,7 +438,7 @@ get_index()
 
 	# update-dragonfly directory not found
 	if [ ! -d ${LOC}/${VERSION} ]; then
-		install -d -o root -g wheel -m 700 ${LOC}/${VERSION} || \
+		install -d -o root -g wheel -m 750 ${LOC}/${VERSION} || \
 			return 1
 	fi
 
