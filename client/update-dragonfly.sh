@@ -43,6 +43,42 @@ verify_server()
 	fi
 }
 
+# Write entries to a log file and update previous entries.  This avoids
+# duplicates
+write_log_entry()
+{
+	TMP=`mktemp /tmp/update-dragonfly.XXXXXX` || return 1
+
+	# File not found thus create an entry and return
+	if [ ! -e ${5} ]; then
+		echo "${1}#${2}#${3}#${4}" > ${5}
+		rm -f ${TMP}
+		return 0
+	fi
+
+	DUP=0
+	for i in `cat ${5}`; do
+		# Duplicate found
+		if [ "`echo $i | cut -d '#' -f 1`" = "${1}" ]; then
+			DUP=1
+			log "Duplicate entry for ${1} detected.  Update."
+			echo "${1}#${2}#${3}#${4}" >> ${TMP}
+		else
+			echo "$i" >> ${TMP}
+		fi
+	done
+
+	# No duplicate found thus we have to add the new entry manually
+	if [ ${DUP} -eq 0 ]; then
+		echo "${1}#${2}#${3}#${4}" >> ${TMP}
+	fi
+
+	cat ${TMP} > ${5}
+	rm -f ${TMP} || return 1
+
+	return 0
+}
+
 # Save all file information needed for a correct installation:
 # User, Group, Location, Mode
 save_file_perm()
@@ -51,7 +87,6 @@ save_file_perm()
 	# $2 = Checksum of the modified (new) file
 
 	if [ -e ${1} ]; then
-                log "Save file status"
 		# Handle file flag
                 if [ `stat -f "%Of" ${1}` -eq 400000 ]; then
 			log "schg"
@@ -61,7 +96,8 @@ save_file_perm()
 		fi
 		STR=`stat -f "%OLp#%Su#%Sg" ${1}` || return
 		# Write install log entry
-                echo "${1}#${STR}#${2}#${FL}" >> ${TMPLOG}
+                #echo "${1}#${STR}#${2}#${FL}" >> ${INSTLOG}
+                write_log_entry "${1}" "${STR}" "${2}" "${FL}" "${INSTLOG}"
         else
                 log "${1} not installed.  Help me"
         fi
@@ -215,13 +251,13 @@ reinstall_backup()
 		exit 1
 	fi
 
-	if [ ! -e ${TMPLOG} ]; then
+	if [ ! -e ${PASTLOG} ]; then
 		echo "No update log found.  Cannot reinstall backups"
 		exit 1
 	fi
 
 	echo -n "Reinstalling backups... "	
-	for i in `cat ${TMPLOG}`; do
+	for i in `cat ${PASTLOG}`; do
 		# Location of the file
 		BINARY=`echo ${i} | cut -d '#' -f 1`
 		# Mode
@@ -272,7 +308,7 @@ install_updates()
 	# Number of installed files
 	ISUM=0
 
-	if [ ! -e ${TMPLOG} ]; then
+	if [ ! -e ${INSTLOG} ]; then
 		echo "No update log found.  Please run `basename $0` -g at first"
 		exit 1
 	fi
@@ -283,7 +319,7 @@ install_updates()
 		echo "Without -n `basename $0` would update the following files"
 	fi
 
-	for i in `cat ${TMPLOG}`; do
+	for i in `cat ${INSTLOG}`; do
 		# Location of the file
 		BINARY=`echo ${i} | cut -d '#' -f 1`
 		# Mode
@@ -312,6 +348,9 @@ install_updates()
 					${BIN_TEMP} ${BINARY} || return 1
 				# Reset possible file flags
 				handle_file_flags ${BINARY} ${FLAGS} 1
+				write_log_entry "${BINARY}" \
+					"${MODE}#${USER}#${GROUP}" "${SUM_NEW}" \
+					"${FLAGS}" "${PASTLOG}"
 				ISUM=$(($ISUM + 1))
 			else
 				echo "${BINARY}"
@@ -333,14 +372,14 @@ install_updates()
 show_updates()
 {
 	# NO INSTALL.LOG found
-	if [ ! -e ${TMPLOG} ]; then
+	if [ ! -e ${INSTLOG} ]; then
 		echo "All available updates are already installed"
 		return
 	fi
 
 	echo ""
 	echo "Updates for the following files are available:"
-	for i in `cat ${TMPLOG}`; do
+	for i in `cat ${INSTLOG}`; do
 		echo ${i} | cut -d '#' -f 1
 	done
 }
@@ -417,7 +456,6 @@ get_updates()
 		if [ ${CAIRET} -eq 0 -a ${OVER} -eq 0 ]; then
 			# Patch existing file
 			save_file_perm ${BINARY} ${SUM_NEW}
-			log "Patch ${BINARY}"
 			patch_file ${BINARY} ${DIFF} ${SUM_NEW}
 		elif [ ${CAIRET} -eq 0 -a ${OVER} -eq 1 ]; then
 			# Overwrite existing file
@@ -465,10 +503,10 @@ get_index()
 	fi
 
 	# This is the file where all to-be-installed files are recorded	
-	TMPLOG=${LOC}/${VERSION}/INSTALL.LOG
-	#if [ -e ${TMPLOG} ]; then
-	#	rm -f ${TMPLOG}
-	#fi
+	INSTLOG=${LOC}/${VERSION}/INSTALL.LOG
+	if [ -e ${INSTLOG} ]; then
+		rm -f ${INSTLOG}
+	fi
 
 	# Fetch the checksum first.  If the fetched checksum and the computed
 	# checksum of an installed INDEX file match, no newer updates are
@@ -576,7 +614,8 @@ NFLAG=0
 RFLAG=0
 DEBUG=0
 
-TMPLOG=
+INSTLOG=
+PASTLOG=
 SUM=/sbin/sha1
 
 set -- $args
@@ -650,14 +689,16 @@ fi
 if [ ${IFLAG} -eq 1 ]; then
 	startup
 	VERSION=`uname -r | cut -d '-' -f 1`
-	TMPLOG=${LOC}/${VERSION}/INSTALL.LOG
+	INSTLOG=${LOC}/${VERSION}/INSTALL.LOG
+	PASTLOG=${LOC}/${VERSION}/PAST.LOG
 	install_updates
 fi
 
 if [ ${RFLAG} -eq 1 ]; then
 	startup
 	VERSION=`uname -r | cut -d '-' -f 1`
-	TMPLOG=${LOC}/${VERSION}/INSTALL.LOG
+	INSTLOG=${LOC}/${VERSION}/INSTALL.LOG
+	PASTLOG=${LOC}/${VERSION}/PAST.LOG
 	reinstall_backup
 fi
 
