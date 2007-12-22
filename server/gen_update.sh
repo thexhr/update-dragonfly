@@ -1,43 +1,44 @@
 #!/bin/sh
 
-# Base directory where the unpatched and the patched system is
-#BASE=/usr/scratch/update-dragonfly
-BASE=/home/update/up
-
-
-SUM=/sbin/sha1
-ARCH=`uname -m`
-VERSION=`uname -r | cut -d '-' -f 1`
-LOC="${BASE}/${VERSION}/${ARCH}"
-INDEX="${LOC}/INDEX"
-
-if [ $# -le 2 ]; then
-	echo "Usage: $0 <prefix> <old tree> <new tree>"
+if [ -e gen_update.conf ]; then
+	. gen_update.conf
+else
+	echo "Config file not found."
 	exit 1
 fi
 
-prefix=$1
-opath=$2
-mpath=$3
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin:${PATH}
 
-# Keep track of the real pathes in the system
-ropath=""
-rmpath=""
-otemp=$2
+# Print a message if -v is given
+log()
+{
+	MSG=$1
+	if [ ${DEBUG} -eq 1 ]; then
+		echo ${MSG}
+	fi
+}
+
 
 # Check if $LOC is available
 startup()
 {
-	if [ ! -d $LOC ]; then
-		echo "$LOC does not exists.  Create it"
-		mkdir -p $LOC
-		chmod -R 701 ${BASE}
-	elif [ -d $LOC ]; then
-		echo "$LOC exists.  Clean it"
-		rm -rf -I $LOC/*	
-		mkdir -p $LOC
+
+	ARCH=`uname -m`
+	VERSION=`uname -r | cut -d '-' -f 1`
+	LOC="${BASE}/${VERSION}/${ARCH}"
+	INDEX="${LOC}/INDEX"
+
+	if [ ! -d ${LOC} ]; then
+		log "${LOC} does not exists.  Create it"
+		install -d -o root -g wheel -m 750 -p ${LOC}
+	elif [ -d ${LOC} ]; then
+		log "${LOC} exists.  Clean it"
+		rm -rf -I ${LOC}/*
 	fi
 
+	if [ -e ${BSLOG} ]; then
+		rm ${BSLOG}
+	fi
 }
 
 # Copy the complete file to the update directory.  This is usefull if the user
@@ -52,7 +53,7 @@ copy_file()
 
 	FLOC=${LOC}/`echo ${5} | sed -e 's/\//_/g'`
 
-	echo "Copy $1 to $FLOC"
+	#echo "Copy $1 to $FLOC"
 	
 	case "`stat -f "%ST" $prefix/${1}`" in
 		'*')	
@@ -85,10 +86,10 @@ create_patch()
 	DIFF="${LOC}/${NAME}.diff"
         
 	case "${FTYPE}" in
-                '*')
+                '*'|*)
 			# Executable, so use bsdiff (works with shell scripts
 			# as well)
-                        bsdiff $prefix/${1} $prefix/${2} ${DIFF}
+                        bsdiff $prefix/${1} $prefix/${2} ${DIFF} || return 1
 			if [ ! -e ${DIFF} ]; then
 				echo "Creating ${DIFF} failed.  Abort"
 				exit $?
@@ -101,20 +102,45 @@ create_patch()
 		'@')
 			echo "No symlink support"
 		;;
-                *)
+                #*)
 			# Normal file
-			diff -uN $prefix/${1} $prefix/${2} > ${DIFF}
-			if [ ! -e ${DIFF} ]; then
-				echo "Creating ${DIFF} failed.  Abort"
-				exit $?
-			fi
-			SUM_DIFF="`${SUM} -q ${DIFF}`"
+		#	diff -uN $prefix/${1} $prefix/${2} > ${DIFF}
+		#	if [ ! -e ${DIFF} ]; then
+		#		echo "Creating ${DIFF} failed.  Abort"
+		#		exit $?
+		#	fi
+		#	SUM_DIFF="`${SUM} -q ${DIFF}`"
 			# Generate INDEX entry
-			echo "${5}#`basename ${DIFF}`#${SUM_DIFF}#${3}#${4}"\
-				 >> ${INDEX}
-                ;;
+		#	echo "${5}#`basename ${DIFF}`#${SUM_DIFF}#${3}#${4}"\
+		#		 >> ${INDEX}
         esac
 
+}
+
+create_build_stamp()
+{
+	# $1 = orig path
+	# $2 = new path
+	# $3 = real path
+
+	#if [ "
+	CNT=`${DC} ${1} ${2}` || return 1
+	# If we have a difference between 1 and 128 chars, consider the file
+	# modified from a build timestamp.  See Colin Percivals Paper for 
+	# further information
+	if [ ${CNT} -ge 1 -a ${CNT} -le 128 ]; then
+		log "Create build stamp for ${3}"
+		echo "${3}" >> ${BSLOG}
+	else
+		O1="obdj1"
+		O2="obdj2"
+		echo `objdump -a ${1}` > ${01}
+		echo `objdump -a ${2}` > ${02}
+		if [ `diff -u ${01} ${02} | wc -l | awk '{print $1}'` -ge 1 ]; then
+			echo "${3}" >> ${BSLOG}
+		fi
+		log "Big difference for ${3}: ${CNT} chars"
+	fi
 }
 
 dir()
@@ -133,6 +159,12 @@ dir()
 			# Start recursion
                		dir $i
                 fi
+		# Don't try to diff fortune files.  They are randomized during
+		# every build (and dont ask me why)
+		if [ "$ropath" = "/usr/share/games/fortune" ]; then
+			log "Dont try to diff fortunes dat files"
+			break
+		fi
 		# Compare two files
 		if [ -f "$prefix/$opath/$i" ]; then
 			if [ -f "$prefix/$mpath/$i" ]; then
@@ -141,16 +173,19 @@ dir()
 				NSUM=`${SUM} -q $prefix/$mpath/$i`
 				# Checksum different, so generate a patch
 				if [ "${OSUM}" != "${NSUM}" ]; then
-					echo -n "NOTE: $ropath/$i and "
-					echo "$rmpath/$i differ.  Create patch"
-					# Create a pathc
-					create_patch "$opath/$i" "$mpath/$i" "${OSUM}" "${NSUM}" "${ropath}/$i"
-					copy_file "$opath/$i" "$mpath/$i" "${OSUM}" "${NSUM}" "${ropath}/$i"
+					if [ ${BFLAG} -eq 0 ]; then
+						log "NOTE: $ropath/$i and 
+							$rmpath/$i differ.  Create patch"
+						create_patch "$opath/$i" "$mpath/$i" "${OSUM}" "${NSUM}" "${ropath}/$i"
+						copy_file "$opath/$i" "$mpath/$i" "${OSUM}" "${NSUM}" "${ropath}/$i"
+					else
+						create_build_stamp "$prefix/$opath/$i" "$prefix/$mpath/$i" "${ropath}/$i"
+					fi
 				fi
 			# XXX What to do now?
 			else
-				echo -n "WARNING: $prefix/$opath/$i exists "
-				echo "whether $prefix/$mpath/$i not"
+				log "WARNING: $prefix/$opath/$i exists 
+				whether $prefix/$mpath/$i not"
 			fi
 		fi
         done
@@ -170,9 +205,54 @@ dir()
 	fi
 }
 
+usage()
+{
+	echo "usage: $0 [-bh] <prefix> <old tree> <new tree>"
+	echo "		-b : Create build stamps log"
+	echo "		-h : Display this help"
+	echo "		-v : Be more verbose"
+	echo ""
+	echo "Example $0 /usr/build old new"
+	exit 0
+}
+
+args=`getopt bhv $*`
+
+if [ $? -ne 0 ]; then
+	usage
+fi
+
+BFLAG=0
+DEBUG=0
+
+set -- $args
+for i; do
+        case "$i" in
+	# Create build stamps log
+	-b)
+		BFLAG=1
+		shift;;
+	-h)
+		usage; shift;;
+	-v)
+		DEBUG=1
+		shift;;
+	--)
+		shift; break;;
+	esac
+done
+
+prefix=$1
+opath=$2
+mpath=$3
+
+# Keep track of the real pathes in the system
+ropath=""
+rmpath=""
+otemp=$2
+
 startup
 cd "$prefix/$opath"
-#dir "$prefix/$opath"
 dir "."
 
 # Generate the INDEX hash
