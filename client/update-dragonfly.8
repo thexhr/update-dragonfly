@@ -43,8 +43,18 @@ checks if updates for
 are available on a server.  If yes, the user can get and install these
 updates.
 .Nm
+supports incremental updates and
 provides a backup function so that accidently installed updates can be
 reinstalled.
+.Pp
+.Nm
+checks if the file to be updated exists an checks if the file matches the
+provided checksum.  If that is true the file will be patched and stored for
+later install.  If the checksum differs (the user compiled the world with
+custom compiler flags) the whole file is fetched from the server.  The user
+can chose if he wants to overwrite custom files (OVERWRITE option in the
+.Nm.conf
+config file).
 The options are as follows:
 .Bl -tag -width indent
 .It Fl f Ar configfile
