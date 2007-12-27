@@ -36,7 +36,8 @@ startup()
 		rm -rf -I ${LOC}/*
 	fi
 
-	if [ -e ${BSLOG} ]; then
+	# If we do a build stamp run and BSLOG exists, delete it
+	if [ ${BFLAG} -eq 1 -a -e ${BSLOG} ]; then
 		rm ${BSLOG}
 	fi
 }
@@ -51,19 +52,19 @@ copy_file()
 	# $4 = Checksum of the modified file
 	# $5 = Real path (without prefix and directory name) of the file
 
+	# Create unique file name
 	FLOC=${LOC}/`echo ${5} | sed -e 's/\//_/g'`
 
-	#echo "Copy $1 to $FLOC"
-	
+	# Check the file type
 	case "`stat -f "%ST" $prefix/${1}`" in
-		'*')	
-			cp $prefix/${2} ${FLOC}	
-			#echo "${5}#FILE#FILE#${3}#${4}"\
-			#	>> ${INDEX}
-			;;
 		'@')
 			echo "Symlink.  Skip it"
-			;;
+			break
+		;;
+		*)
+			# Just copy the file
+			cp $prefix/${2} ${FLOC}	
+		;;
 	esac
 }
 
@@ -123,23 +124,26 @@ create_build_stamp()
 	# $2 = new path
 	# $3 = real path
 
-	#if [ "
-	CNT=`${DC} ${1} ${2}` || return 1
+	# Count the number of differences between the two files
+	CNT=`${DC} ${1} ${2}` #|| return 1
 	# If we have a difference between 1 and 128 chars, consider the file
 	# modified from a build timestamp.  See Colin Percivals Paper for 
 	# further information
 	if [ ${CNT} -ge 1 -a ${CNT} -le 128 ]; then
-		log "Create build stamp for ${3}"
+		log "1. Create build stamp for ${3}"
 		echo "${3}" >> ${BSLOG}
+	# The difference is bigger.  This happens in most cases for lib
+	# archives. 
 	else
-		O1="obdj1"
-		O2="obdj2"
-		echo `objdump -a ${1}` > ${01}
-		echo `objdump -a ${2}` > ${02}
-		if [ `diff -u ${01} ${02} | wc -l | awk '{print $1}'` -ge 1 ]; then
+		diff1="/tmp/obdj1"
+		diff2="/tmp/obdj2"
+		objdump -a ${1} > ${diff1}
+		objdump -a ${2} > ${diff2}
+		# Do we have a diff in the archive header?
+		if [ `diff -u ${diff1} ${diff2} | wc -l | awk '{print $1}'` -ge 1 ]; then
 			echo "${3}" >> ${BSLOG}
+			log "2. Create build stamp for ${3}"
 		fi
-		log "Big difference for ${3}: ${CNT} chars"
 	fi
 }
 
@@ -173,11 +177,17 @@ dir()
 				NSUM=`${SUM} -q $prefix/$mpath/$i`
 				# Checksum different, so generate a patch
 				if [ "${OSUM}" != "${NSUM}" ]; then
+					if [ ${BFLAG} -eq 0 ] && [ -n "`grep -x ${ropath}/$i ${BSLOG}`" ]; then
+						log "Build stamp file for ${ropath}/$i found"
+						continue
+					fi
+					# No build stamp run
 					if [ ${BFLAG} -eq 0 ]; then
 						log "NOTE: $ropath/$i and 
 							$rmpath/$i differ.  Create patch"
 						create_patch "$opath/$i" "$mpath/$i" "${OSUM}" "${NSUM}" "${ropath}/$i"
 						copy_file "$opath/$i" "$mpath/$i" "${OSUM}" "${NSUM}" "${ropath}/$i"
+					# Build stamp run
 					else
 						create_build_stamp "$prefix/$opath/$i" "$prefix/$mpath/$i" "${ropath}/$i"
 					fi
