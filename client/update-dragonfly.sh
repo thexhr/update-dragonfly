@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Copyright (c) 2007 Matthias Schmidt <schmidtm@mathematik.uni-marburg.de>
+# Copyright (c) 2007 Matthias Schmidt <matthias@dragonflybsd.org>
 
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin:${PATH}
 
